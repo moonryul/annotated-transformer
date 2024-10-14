@@ -947,6 +947,7 @@ class TrainState:
 
 # %% id="2HAZD3hiTsqJ"
 def run_epoch(
+    epoch, is_main_process,
     data_iter,
     model,
     loss_compute,
@@ -983,16 +984,18 @@ def run_epoch(
         total_loss += loss
         total_tokens += batch.ntokens
         tokens += batch.ntokens
+        
         if i % 40 == 1 and (mode == "train" or mode == "train+log"):
             lr = optimizer.param_groups[0]["lr"]
             elapsed = time.time() - start
-            print(
-                (
-                    "Epoch Step: %6d | Accumulation Step: %3d | Loss: %6.2f "
-                    + "| Tokens / Sec: %7.1f | Learning Rate: %6.1e"
+            if is_main_process:
+                print(
+                    (
+                        "Epoch: %6d, Step: %6d | Accumul Step: %3d | Loss: %6.2f "
+                        + "| Tokens / Sec: %7.1f | Learning Rate: %6.1e"
+                    )
+                    % (epoch, i, n_accum, loss / batch.ntokens, tokens / elapsed, lr)
                 )
-                % (i, n_accum, loss / batch.ntokens, tokens / elapsed, lr)
-            )
             start = time.time()
             tokens = 0
         del loss
@@ -1674,7 +1677,7 @@ def train_worker(
 
         model.train()
         print(f"[GPU{gpu}] Epoch {epoch} Training ====", flush=True)
-        _, train_state = run_epoch(
+        _, train_state = run_epoch(epoch, is_main_process,
             (Batch(b[0], b[1], pad_idx) for b in train_dataloader),
             model,
             SimpleLossCompute(module.generator, criterion),
@@ -1693,7 +1696,7 @@ def train_worker(
 
         print(f"[GPU{gpu}] Epoch {epoch} Validation ====", flush=True)
         model.eval()
-        sloss = run_epoch(
+        sloss = run_epoch(epoch, is_main_process,
             (Batch(b[0], b[1], pad_idx) for b in valid_dataloader),
             model,
             SimpleLossCompute(module.generator, criterion),
