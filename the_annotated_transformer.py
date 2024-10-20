@@ -133,8 +133,15 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 # Set to False to skip notebook execution (e.g. for debugging)
 warnings.filterwarnings("ignore")
-RUN_EXAMPLES = True
 
+#MJ 
+RUN_EXAMPLES = True
+#RUN_EXAMPLES = False
+
+
+#MJ: "Run Cell}..": These features are part of VSCode's Python extension, which emulates notebook-like functionality in .py files 
+# by treating sections separated by # %% as cells. 
+# This setup is especially handy when you’re developing or experimenting interactively.
 
 # %%
 # Some convenience helper functions used throughout the notebook
@@ -143,15 +150,22 @@ RUN_EXAMPLES = True
 def is_interactive_notebook():
     return __name__ == "__main__"
 
+# __name__ is set to "__main__" when the Python file is executed directly as the main script. 
+# For example, if you run a script from the command line like this:
+#     python my_script.py
+
+#But, __name__ is set to the module's name when the file is imported as a module by import my_script in another script.
+
+    
 
 def show_example(fn, args=[]):
     if __name__ == "__main__" and RUN_EXAMPLES:
         return fn(*args)
 
 
-def execute_example(fn, args=[]):
+def execute_example(fn, args=[]): #MJ: The default args is empty list [ ]
     if __name__ == "__main__" and RUN_EXAMPLES:
-        fn(*args)
+        fn(*args)  #=> fn()
 
 
 class DummyOptimizer(torch.optim.Optimizer):
@@ -519,9 +533,17 @@ show_example(example_mask)
 def attention(query, key, value, mask=None, dropout=None):
     "Compute 'Scaled Dot Product Attention'"
     d_k = query.size(-1)
+    
+    
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+    
+    with open("log.txt", "a") as log_file:  #MJ: append mode:
+         print(f'after  torch.matmul(query, key.transpose(-2, -1)) : scores: {scores.shape}; mask:{mask.shape}',
+               flush=True, file=log_file)
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
+        
+        
     p_attn = scores.softmax(dim=-1)
     if dropout is not None:
         p_attn = dropout(p_attn)
@@ -600,9 +622,13 @@ class MultiHeadedAttention(nn.Module):
 
     def forward(self, query, key, value, mask=None):
         "Implements Figure 2"
+        
+       
         if mask is not None:
             # Same mask applied to all h heads.
-            mask = mask.unsqueeze(1)
+            mask = mask.unsqueeze(1)  #MJ: add dim 1 for seq_length dim
+            with open("log.txt", "a") as log_file:  #MJ: append mode:
+                print(f'in MultiheadAttention: Q={query.shape}, K={key.shape}, V={value.shape}, mask={mask.shape}', flush=True, file=log_file)
         nbatches = query.size(0)
 
         # 1) Do all the linear projections in batch from d_model => h x d_k
@@ -617,6 +643,7 @@ class MultiHeadedAttention(nn.Module):
         )
 
         # 3) "Concat" using a view and apply a final linear.
+        #MJ: Combine heads and
         x = (
             x.transpose(1, 2)
             .contiguous()
@@ -625,7 +652,7 @@ class MultiHeadedAttention(nn.Module):
         del query
         del key
         del value
-        return self.linears[-1](x)
+        return self.linears[-1](x) #MJ:  #  apply output transformation
 
 
 # %% [markdown] id="EDRba3J3TsqH"
@@ -988,7 +1015,7 @@ def run_epoch(
         if i % 40 == 1 and (mode == "train" or mode == "train+log"):
             lr = optimizer.param_groups[0]["lr"]
             elapsed = time.time() - start
-            if is_main_process:
+            if is_main_process:  #MJ: Print the log message only in the main process, gpu =0.
                 print(
                     (
                         "Epoch: %6d, Step: %6d | Accumul Step: %3d | Loss: %6.2f "
@@ -1239,7 +1266,7 @@ def loss(x, crit):
     predict = torch.FloatTensor([[0, x / d, 1 / d, 1 / d, 1 / d]])
     return crit(predict.log(), torch.LongTensor([1])).data
 
-
+#to penalize the model if it gets  very confident about a given choice.
 def penalization_visualization():
     crit = LabelSmoothing(5, 0, 0.1)
     loss_data = pd.DataFrame(
@@ -1314,9 +1341,15 @@ class SimpleLossCompute:
 # > This code predicts a translation using greedy decoding for simplicity.
 # %% id="N2UOpnT3bIyU"
 def greedy_decode(model, src, src_mask, max_len, start_symbol):
+    with open("log.txt", "a") as log_file:  #MJ: append mode:
+         print(f'in greedy_decode: during encoding:', flush=True, file=log_file)
     memory = model.encode(src, src_mask)
     ys = torch.zeros(1, 1).fill_(start_symbol).type_as(src.data)
     for i in range(max_len - 1):
+        
+        with open("log.txt", "a") as log_file:  #MJ: append mode:
+              print(f'in greedy_decode: during DEcoding:', flush=True, file=log_file)
+                
         out = model.decode(
             memory, src_mask, ys, subsequent_mask(ys.size(1)).type_as(src.data)
         )
@@ -1500,6 +1533,11 @@ def collate_batch(
 ):
     bs_id = torch.tensor([0], device=device)  # <s> token id
     eos_id = torch.tensor([1], device=device)  # </s> token id
+    
+#MJ:
+# torch.tensor([0], device=device): The tensor is created directly on the specified device (device), such as the GPU or CPU.
+# torch.tensor([0]) followed by .to(device): The tensor is first created on the default device (usually CPU) and then moved to the target device (device).
+
     src_list, tgt_list = [], []
     for (_src, _tgt) in batch:
         processed_src = torch.cat(
@@ -1627,18 +1665,24 @@ def train_worker(
     is_distributed=False,
 ):
     print(f"Train worker process using GPU: {gpu} for training", flush=True)
-    torch.cuda.set_device(gpu)
+    torch.cuda.set_device(gpu) #MJ: This is redundant and confusing
 
     pad_idx = vocab_tgt["<blank>"]
     d_model = 512
     model = make_model(len(vocab_src), len(vocab_tgt), N=6)
     model.cuda(gpu)
+    #MJ: model.cuda(3) is valid and can directly move the model to GPU 3.
+    # model.to(torch.device('cuda:3')) is a more flexible and generalized method, allowing easier switching between CPU and GPU.
+
     module = model
     is_main_process = True
     if is_distributed:
         dist.init_process_group(
             "nccl", init_method="env://", rank=gpu, world_size=ngpus_per_node
-        )
+        ) #MJ: ngpus_per_node is used to specify how many processes (or GPUs) are running 
+          #on each node (machine). Even if you are training on a specific GPU within a process, 
+          # the overall environment must be aware of how many GPUs are available on the node.
+        
         model = DDP(model, device_ids=[gpu])
         module = model.module
         is_main_process = gpu == 0
@@ -1647,6 +1691,12 @@ def train_worker(
         size=len(vocab_tgt), padding_idx=pad_idx, smoothing=0.1
     )
     criterion.cuda(gpu)
+    
+    #MJ: criterion is not a tensor, 
+    # but Since LabelSmoothing is an instance of nn.Module, 
+    # it contains parameters or buffers that need to be moved to the appropriate device (e.g., GPU) for the loss computation to work properly.
+    # When you move a nn.Module (in this case, LabelSmoothing) to the GPU using criterion.cuda(gpu), all the internal components of the module 
+    # (such as any parameters or tensors) are moved to the GPU as well.
 
     train_dataloader, valid_dataloader = create_dataloaders(
         gpu,
@@ -1876,7 +1926,8 @@ def check_outputs(
         print("\nExample %d ========\n" % idx)
         b = next(iter(valid_dataloader))
         rb = Batch(b[0], b[1], pad_idx)
-        greedy_decode(model, rb.src, rb.src_mask, 64, 0)[0]
+        
+        #MJ: greedy_decode(model, rb.src, rb.src_mask, 64, 0)[0]
 
         src_tokens = [
             vocab_src.get_itos()[x] for x in rb.src[0] if x != pad_idx
@@ -1922,6 +1973,7 @@ def run_model_example(n_examples=5):
     print("Loading Trained Model ...")
 
     model = make_model(len(vocab_src), len(vocab_tgt), N=6)
+    
     model.load_state_dict(
         torch.load("multi30k_model_final.pt", map_location=torch.device("cpu"))
     )
@@ -1933,7 +1985,8 @@ def run_model_example(n_examples=5):
     return model, example_data
 
 
-# execute_example(run_model_example)
+#execute_example(run_model_example)
+execute_example(run_model_example, args=[1]) #n_examples = 1
 
 
 # %% [markdown] id="0ZkkNTKLTsqO"
@@ -1967,14 +2020,17 @@ def mtx2df(m, max_row, max_col, row_tokens, col_tokens):
 
 
 def attn_map(attn, layer, head, row_tokens, col_tokens, max_dim=30):
-    df = mtx2df(
-        attn[0, head].data,
+    df = mtx2df(  #MJ: matrix to DataFrame
+        attn[0, head].data, #MJ: attn[0, head] refers to the attention map 
+                             #for a particular attention head in the first batch.
         max_dim,
         max_dim,
         row_tokens,
         col_tokens,
     )
     return (
+        #The function creates an Altair chart, specifically a heatmap, where each cell represents the attention value between two tokens
+        # (one from the row and one from the column). 
         alt.Chart(data=df)
         .mark_rect()
         .encode(
@@ -2004,12 +2060,19 @@ def get_decoder_src(model, layer):
 def visualize_layer(model, layer, getter_fn, ntokens, row_tokens, col_tokens):
     # ntokens = last_example[0].ntokens
     attn = getter_fn(model, layer)
+    #MJ=> Get Attention: attn = getter_fn(model, layer) extracts the attention matrix for the given layer using get_encoder()
     n_heads = attn.shape[1]
+    
+    #MJ:
+    # Loop through Attention Heads: The attention maps for each head in the layer are 
+    # visualized. The loop generates attention maps for all attention heads (n_heads):
+        
     charts = [
         attn_map(
             attn,
-            0,
-            h,
+            0,  # ==layer, not used in attn_map; but attn is from particular layer as
+                #   attn = getter_fn(model, layer)
+            h,  # For each attention head
             row_tokens=row_tokens,
             col_tokens=col_tokens,
             max_dim=ntokens,
@@ -2065,15 +2128,16 @@ show_example(viz_encoder_self)
 # %% tags=[]
 def viz_decoder_self():
     model, example_data = run_model_example(n_examples=1)
-    example = example_data[len(example_data) - 1]
+    #MJ: example_data: results[idx] = (rb, src_tokens, tgt_tokens, model_out, model_txt)
+    example = example_data[len(example_data) - 1] #MJ: get the last example_data
 
     layer_viz = [
         visualize_layer(
             model,
             layer,
-            get_decoder_self,
+            get_decoder_self, #self-attention
             len(example[1]),
-            example[1],
+            example[1],  #MJ: example[1] = src_tokens
             example[1],
         )
         for layer in range(6)
@@ -2103,10 +2167,10 @@ def viz_decoder_src():
         visualize_layer(
             model,
             layer,
-            get_decoder_src,
+            get_decoder_src, #cross-attention
             max(len(example[1]), len(example[2])),
-            example[1],
-            example[2],
+            example[1], #MJ: src_tokens,
+            example[2],  #MJ:  tgt_tokens
         )
         for layer in range(6)
     ]
